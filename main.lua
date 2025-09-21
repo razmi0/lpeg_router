@@ -10,9 +10,52 @@ local P, C, V, Ct, S = lpeg.P, lpeg.C, lpeg.V, lpeg.Ct, lpeg.S
 --
 local DYNAMIC_IDENTIFIER = ":"
 --
+local GRAMMAR = P {
+    "ROUTE",
+    ROUTE    = Ct((P("/") * V("SEGMENT")) ^ 1),
+    STATIC   = C((1 - S("/:")) ^ 1),
+    PARAM    = P(DYNAMIC_IDENTIFIER) * C((1 - P("/")) ^ 1),
+    WILDCARD = P("*"),
+    SEGMENT  =
+        (
+            V("WILDCARD") / function()
+                return {
+                    wildcard = true,
+                    pattern = P("/") * C(P(1) ^ 0) / function(value)
+                        return { wildcard = value }
+                    end
+                }
+            end
+        )
+        +
+        (
+            V("STATIC") / function(part)
+                return {
+                    static = part,
+                    pattern = P("/") * C(P(part)) / function(a) return { static = a } end
+                }
+            end
+        )
+        +
+        (
+            V("PARAM") / function(name)
+                return {
+                    param = name,
+                    pattern = P("/") * C((1 - P("/")) ^ 1) / function(value)
+                        return {
+                            param = { name = name, value = value }
+                        }
+                    end
+                }
+            end
+        )
 
 
-local function update_strand(router, parsed, id)
+
+
+}
+
+local update_strand = function(router, parsed, id)
     local strand = nil
     for _, entry in ipairs(parsed) do
         strand = strand and (strand * entry.pattern) or entry.pattern
@@ -28,7 +71,7 @@ local function update_strand(router, parsed, id)
         or route_pattern
 end
 
-local function update_route_data(router, route, methods, handlers)
+local update_route_data = function(router, route, methods, handlers)
     if router._route_cache[route] then
         local cache_id = router._route_cache[route]
         local stored_data = router._route_data[cache_id]
@@ -51,9 +94,15 @@ end
 
 local get_params = function(captures)
     local params = {}
+    local wilds = {}
     for _, node in ipairs(captures) do
         if node.param then
             params[node.param.name] = node.param.value
+        elseif node.wildcard then
+            for match in (node.wildcard .. "/"):gmatch("(.-)" .. "/") do
+                wilds[#wilds + 1] = match
+            end
+            params["wildcard"] = wilds
         end
     end
     return params
@@ -67,7 +116,7 @@ local get_methods = function(route_data)
     return available_methods
 end
 
-local function create_node(methods, handlers)
+local create_node = function(methods, handlers)
     local new_node = {}
     for _, method in ipairs(methods) do
         new_node[method] = {}
@@ -83,33 +132,6 @@ local router = setmetatable({
     _route_data = {},
     _route_cache = {},
     size = 0,
-    _grammar = P {
-        "ROUTE",
-        ROUTE   = Ct((P("/") * V("SEGMENT")) ^ 1),
-        STATIC  = C((1 - S("/:")) ^ 1),
-        PARAM   = P(DYNAMIC_IDENTIFIER) * C((1 - P("/")) ^ 1),
-        SEGMENT =
-            (
-                V("STATIC") / function(part)
-                    return {
-                        static = part,
-                        pattern = P("/") * C(P(part)) / function(a) return { static = a } end
-                    }
-                end
-            )
-            + (
-                V("PARAM") / function(name)
-                    return {
-                        param = name,
-                        pattern = P("/") * C((1 - P("/")) ^ 1) / function(value)
-                            return {
-                                param = { name = name, value = value }
-                            }
-                        end
-                    }
-                end
-            ),
-    },
     add = function(self, methods, route, handlers)
         if type(methods) == "string" then methods = { methods } end
         if type(handlers) == "function" then handlers = { handlers } end
@@ -124,11 +146,15 @@ local router = setmetatable({
         self._route_cache[route] = route_id
         self._route_data[route_id] = create_node(methods, handlers)
 
+        -- segment identification
         local parsed = assert(
-            lpeg.match(self._grammar, route),
+            lpeg.match(GRAMMAR, route),
             "\n\27[38;5;196m[Error] Parsing failed\27[0m : " .. route
         )
 
+        print(inspect(parsed))
+
+        -- lpeg strand update
         update_strand(self, parsed, route_id)
     end,
     search = function(self, method, req_route)
@@ -160,13 +186,15 @@ end, function()
 
 end }
 
-router:add({ "GET", "POST" }, "/products/:type/:id", cbs)
-router:add({ "POST" }, "/products/:type/:id", cbs)
-router:add({ "PUT" }, "/products/:type/:id", cbs)
-local data_1 = router:search("PUT", "/products/shorts/42")
+router:add({ "GET", "POST" }, "/products/:type/*", cbs)
+router:add({ "GET", "POST" }, "/items/:nature/*", cbs)
+local data_1 = router:search("GET", "/products/item/ouch/lol")
+local data_2 = router:search("GET", "/items/earth/ouch/lol")
+print(inspect(data_1))
+print(inspect(data_2))
 -- router:add({ "GET", "POST" }, "/users/:id", cbs)
 
-print(inspect(data_1))
+-- print(inspect(data_1))
 
 
 -- router:add("POST", "/users/:id", function()
