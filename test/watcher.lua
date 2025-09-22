@@ -204,6 +204,6 @@ end
 
 --#endregion
 
-Watch.new({ paths = { "./" }, exec = "luajit main.lua" }):on("change"):on("start"):run()
+Watch.new({ paths = { "./" }, recursive = true, exec = "luajit test/index.lua" }):on("change"):on("start"):run()
 
 return Watch
