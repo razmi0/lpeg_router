@@ -55,22 +55,6 @@ local GRAMMAR = P {
 
 }
 
-local update_strand = function(router, parsed, id)
-    local strand = nil
-    for _, entry in ipairs(parsed) do
-        strand = strand and (strand * entry.pattern) or entry.pattern
-    end
-
-    local route_pattern = strand / function(...)
-        local caps = { ... }
-        return { route_id = id, captures = caps }
-    end
-
-    router._compiled_strand =
-        router._compiled_strand and (router._compiled_strand + route_pattern)
-        or route_pattern
-end
-
 local update_route_data = function(router, route, methods, handlers)
     if router._route_cache[route] then
         local cache_id = router._route_cache[route]
@@ -127,12 +111,18 @@ local create_node = function(methods, handlers)
     return new_node
 end
 
+local prefix_slash = function(str)
+    if str:match("^[^/]") then return "/" .. str end
+    return str
+end
+
 local router = setmetatable({
     _compiled_strand = nil,
-    _route_data = {},
-    _route_cache = {},
+    _route_data = {},  -- ( [id] : { [method] : handlers } )[]
+    _route_cache = {}, -- ( [path] : id )[]
     size = 0,
     add = function(self, methods, route, handlers)
+        route = prefix_slash(route)
         if type(methods) == "string" then methods = { methods } end
         if type(handlers) == "function" then handlers = { handlers } end
 
@@ -152,12 +142,27 @@ local router = setmetatable({
             "\n\27[38;5;196m[Error] Parsing failed\27[0m : " .. route
         )
 
-        print(inspect(parsed))
+        -- print(inspect(parsed))
 
         -- lpeg strand update
-        update_strand(self, parsed, route_id)
+        -- if there's wildcards, store thing to attach to route_id ?
+        local strand = nil
+        for _, entry in ipairs(parsed) do
+            --                   ...    * P("/") * C((1 - P("/")) ^ 1) ..
+            strand = strand and (strand * entry.pattern) or entry.pattern
+        end
+
+        local route_pattern = (strand * (P("/") ^ 0) * -P(1)) / function(...)
+            local caps = { ... }
+            return { route_id = route_id, captures = caps }
+        end
+
+        self._compiled_strand = --  ...    * P("/") * C((1 - P("/")) ^ 1) ..
+            self._compiled_strand and (route_pattern + self._compiled_strand)
+            or route_pattern
     end,
     search = function(self, method, req_route)
+        req_route = prefix_slash(req_route)
         local route = lpeg.match(self._compiled_strand, req_route)
         if not route then return { status = "not_found" } end
         --
@@ -177,42 +182,7 @@ local router = setmetatable({
             handlers = handlers,
             params = params
         }
-    end
+    end,
 }, {})
 
-local cbs = { function()
-
-end, function()
-
-end }
-
-router:add({ "GET", "POST" }, "/products/:type/*", cbs)
-router:add({ "GET", "POST" }, "/items/:nature/*", cbs)
-local data_1 = router:search("GET", "/products/item/ouch/lol")
-local data_2 = router:search("GET", "/items/earth/ouch/lol")
-print(inspect(data_1))
-print(inspect(data_2))
--- router:add({ "GET", "POST" }, "/users/:id", cbs)
-
--- print(inspect(data_1))
-
-
--- router:add("POST", "/users/:id", function()
---     print("POST")
--- end)
-
-
--- router:add("GET", "/users/:id", function()
---     print("GET")
--- end)
-
--- routes:add("POST", "/users/:id", { function()
---     print("POST")
--- end, function()
---     print("POST")
--- end })
-
---
--- local data_2 = router:search("POST", "/users/42")
--- print(inspect(data_1))
--- print(inspect(data_2))
+return router
