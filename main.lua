@@ -103,9 +103,11 @@ end
 local create_node = function(methods, handlers)
     local new_node = {}
     for _, method in ipairs(methods) do
-        new_node[method] = {}
+        new_node[method] = {
+            handlers = {}, inherit = {}
+        }
         for _, cb in ipairs(handlers) do
-            new_node[method][#new_node[method] + 1] = cb
+            new_node[method].handlers[#new_node[method].handlers + 1] = cb
         end
     end
     return new_node
@@ -120,6 +122,7 @@ local router = setmetatable({
     _compiled_strand = nil,
     _route_data = {},  -- ( [id] : { [method] : handlers } )[]
     _route_cache = {}, -- ( [path] : id )[]
+    _wild_route = {},
     size = 0,
     add = function(self, methods, route, handlers)
         route = prefix_slash(route)
@@ -134,22 +137,25 @@ local router = setmetatable({
         -- route is processed
         local route_id = create_id(self)
         self._route_cache[route] = route_id
-        self._route_data[route_id] = create_node(methods, handlers)
 
         -- segment identification
-        local parsed = assert(
+        local parts = assert(
             lpeg.match(GRAMMAR, route),
             "\n\27[38;5;196m[Error] Parsing failed\27[0m : " .. route
         )
 
-        -- print(inspect(parsed))
+        -- print(inspect(parts))
+
+
+
+        -- print(inspect(self._wild_route))
 
         -- lpeg strand update
-        -- if there's wildcards, store thing to attach to route_id ?
         local strand = nil
-        for _, entry in ipairs(parsed) do
+        for _, entry in ipairs(parts) do
             --                   ...    * P("/") * C((1 - P("/")) ^ 1) ..
-            strand = strand and (strand * entry.pattern) or entry.pattern
+            local p = entry.pattern
+            strand = strand and (strand * p) or p -- lpeg concatenation
         end
 
         local route_pattern = (strand * (P("/") ^ 0) * -P(1)) / function(...)
@@ -157,17 +163,70 @@ local router = setmetatable({
             return { route_id = route_id, captures = caps }
         end
 
-        self._compiled_strand = --  ...    * P("/") * C((1 - P("/")) ^ 1) ..
-            self._compiled_strand and (route_pattern + self._compiled_strand)
+
+
+
+        -- storing route data
+        self._route_data[route_id] = create_node(methods, handlers)
+
+
+
+
+        -- inherited routes are the wild ones already registered
+        for _, wild in ipairs(self._wild_route) do
+            local parsed_wild = lpeg.match(wild.pattern, route) -- we test wild route against current route
+            if parsed_wild then                                 -- if match, add wilds handlers to route inherited array of handlers respecting methods
+                local wild_data = self._route_data[parsed_wild.route_id]
+                local current_route_data = self._route_data[route_id]
+                for _, m in ipairs(methods) do
+                    local src = wild_data[m]
+                    local dst = current_route_data[m]
+                    if src and dst then
+                        for _, h in ipairs(src.handlers) do
+                            dst.inherit[#dst.inherit + 1] = h
+                        end
+                    end
+                end
+            end
+        end
+
+        -- store wild one
+        for _, part in ipairs(parts) do
+            if part.wildcard then
+                --
+                self._wild_route[#self._wild_route + 1] = {
+                    pattern = route_pattern,
+                    methods = methods,
+                    route = route,
+                }
+                break
+            end
+        end
+
+
+
+
+
+
+        self._compiled_strand =                                               --  ...     P("/") * C((1 - P("/")) ^ 1) * (P("/") ^ 0) * -P(1)
+            self._compiled_strand and (route_pattern + self._compiled_strand) -- lpeg ordered choice
             or route_pattern
     end,
+    --
     search = function(self, method, req_route)
         req_route = prefix_slash(req_route)
         local route = lpeg.match(self._compiled_strand, req_route)
-        if not route then return { status = "not_found" } end
+        if not route then
+            return {
+                status = "not_found"
+            }
+        end
         --
         local route_data = self._route_data[route.route_id]
-        local handlers = route_data[method]
+        for _, h in ipairs(route_data[method].inherit) do
+            route_data[method].handlers[#route_data[method].handlers + 1] = h
+        end
+        local handlers = route_data[method].handlers
         --
         if not handlers then
             return {
