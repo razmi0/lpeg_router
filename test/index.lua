@@ -2,13 +2,12 @@ local inspect = require("inspect")
 local router = require("main")
 local cbs = {
     function() print("1") end,
-    function() print("2") end
 }
 
-router:add({ "GET", "POST" }, "*", cbs)
--- router:add({ "GET", "POST" }, "/items", cbs)
+router:add("GET", "items", cbs)
+router:add("GET", "*", cbs)
 -- local data_1 = assert(router:search("GET", "/items/item/ouch/lol"))
-local data_2 = assert(router:search("PUT", "/items"))
+local data_2 = assert(router:search("GET", "/items"))
 -- print("data_1", inspect(data_1))
 print("data_2", inspect(data_2))
 -- router:add({ "GET", "POST" }, "/users/:id", cbs)
