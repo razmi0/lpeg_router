@@ -86,7 +86,7 @@ local get_params = function(captures)
             for match in (node.wildcard .. "/"):gmatch("(.-)" .. "/") do
                 wilds[#wilds + 1] = match
             end
-            params["wildcard"] = wilds
+            params["*"] = wilds
         end
     end
     return params
@@ -118,99 +118,102 @@ local prefix_slash = function(str)
     return str
 end
 
+local default = function(methods, paths, handlers)
+    local common_methods = { "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS" }
+
+    if type(paths) == "string" then
+        paths = { paths }
+    elseif not paths then
+        error("router : paths must be a string or a table of strings")
+    end
+
+    if type(handlers) == "function" then
+        handlers = { handlers }
+    elseif not handlers then
+        handlers = {}
+    end
+
+    if type(methods) == "string" then
+        methods = { methods }
+    elseif not methods then
+        methods = common_methods
+    end
+    return methods, paths, handlers
+end
+
 local router = setmetatable({
-    _compiled_strand = nil,
-    _route_data = {},  -- ( [id] : { [method] : handlers } )[]
-    _route_cache = {}, -- ( [path] : id )[]
-    _wild_route = {},
     size = 0,
-    add = function(self, methods, route, handlers)
-        route = prefix_slash(route)
-        if type(methods) == "string" then methods = { methods } end
-        if type(handlers) == "function" then handlers = { handlers } end
+    ---@private
+    _compiled_strand = nil,
+    ---@private
+    _route_data = {},  -- ( [id] : { [method] : handlers } )[]
+    ---@private
+    _route_cache = {}, -- ( [path] : id )[]
+    ---@private
+    _wilds_patterns = {},
+    add = function(self, methods, paths, handlers)
+        methods, paths, handlers = default(methods, paths, handlers)
 
-        -- if route is already stored => update_route_data
-        -- _route_data is updated at given route_id and strand is not updated
-        local is_updated = update_route_data(self, route, methods, handlers)
-        if is_updated then return end
+        for _, path in ipairs(paths) do
+            path = prefix_slash(path)
+            -- if path is already stored => update_route_data
+            -- _route_data is updated at given route_id and strand is not updated
+            local is_updated = update_route_data(self, path, methods, handlers)
+            if is_updated then return end
 
-        -- route is processed
-        local route_id = create_id(self)
-        self._route_cache[route] = route_id
+            -- path is processed
+            local route_id = create_id(self)
+            self._route_cache[path] = route_id
 
-        -- segment identification
-        local parts = assert(
-            lpeg.match(GRAMMAR, route),
-            "\n\27[38;5;196m[Error] Parsing failed\27[0m : " .. route
-        )
+            -- segment of the path identification
+            local parts = assert(
+                lpeg.match(GRAMMAR, path),
+                "\n\27[38;5;196m[Error] Parsing failed\27[0m : " .. path
+            )
 
-        -- print(inspect(parts))
+            -- lpeg strand update
+            local strand = nil
+            for _, entry in ipairs(parts) do
+                --                   ...    * P("/") * C((1 - P("/")) ^ 1) ..
+                local p = entry.pattern
+                strand = strand and (strand * p) or p -- lpeg concatenation
+            end
 
+            local route_pattern = (strand * (P("/") ^ 0) * -P(1)) / function(...)
+                local caps = { ... }
+                return { route_id = route_id, captures = caps }
+            end
 
+            -- storing path data node
+            local route_node = create_node(methods, handlers)
+            self._route_data[route_id] = route_node
 
-        -- print(inspect(self._wild_route))
-
-        -- lpeg strand update
-        local strand = nil
-        for _, entry in ipairs(parts) do
-            --                   ...    * P("/") * C((1 - P("/")) ^ 1) ..
-            local p = entry.pattern
-            strand = strand and (strand * p) or p -- lpeg concatenation
-        end
-
-        local route_pattern = (strand * (P("/") ^ 0) * -P(1)) / function(...)
-            local caps = { ... }
-            return { route_id = route_id, captures = caps }
-        end
-
-
-
-
-        -- storing route data
-        self._route_data[route_id] = create_node(methods, handlers)
-
-
-
-
-        -- inherited routes are the wild ones already registered
-        for _, wild in ipairs(self._wild_route) do
-            local parsed_wild = lpeg.match(wild.pattern, route) -- we test wild route against current route
-            if parsed_wild then                                 -- if match, add wilds handlers to route inherited array of handlers respecting methods
-                local wild_data = self._route_data[parsed_wild.route_id]
-                local current_route_data = self._route_data[route_id]
-                for _, m in ipairs(methods) do
-                    local src = wild_data[m]
-                    local dst = current_route_data[m]
-                    if src and dst then
-                        for _, h in ipairs(src.handlers) do
-                            dst.inherit[#dst.inherit + 1] = h
+            -- inherited routes are the wild ones already registered
+            for _, pattern in ipairs(self._wilds_patterns) do
+                local parsed_wild = lpeg.match(pattern, path) -- we test wild path against current route
+                if parsed_wild then                           -- if match, add wilds handlers to route inherited array of handlers respecting methods
+                    local wild_data = self._route_data[parsed_wild.route_id]
+                    for _, m in ipairs(methods) do
+                        local src = wild_data[m]
+                        local dst = route_node[m]
+                        if src and dst then
+                            for _, h in ipairs(src.handlers) do
+                                dst.inherit[#dst.inherit + 1] = h
+                            end
                         end
                     end
                 end
             end
-        end
 
-        -- store wild one
-        for _, part in ipairs(parts) do
-            if part.wildcard then
-                --
-                self._wild_route[#self._wild_route + 1] = {
-                    pattern = route_pattern,
-                    methods = methods,
-                    route = route,
-                }
-                break
+            -- store wild one
+            if parts[#parts].wildcard then
+                self._wilds_patterns[#self._wilds_patterns + 1] = route_pattern
             end
+
+            self._compiled_strand =                                               --  ...     P("/") * C((1 - P("/")) ^ 1) * (P("/") ^ 0) * -P(1)
+                self._compiled_strand and (route_pattern + self._compiled_strand) -- lpeg ordered choice
+                or route_pattern
         end
-
-
-
-
-
-
-        self._compiled_strand =                                               --  ...     P("/") * C((1 - P("/")) ^ 1) * (P("/") ^ 0) * -P(1)
-            self._compiled_strand and (route_pattern + self._compiled_strand) -- lpeg ordered choice
-            or route_pattern
     end,
     --
     search = function(self, method, req_route)
@@ -223,23 +226,26 @@ local router = setmetatable({
         end
         --
         local route_data = self._route_data[route.route_id]
-        for _, h in ipairs(route_data[method].inherit) do
-            route_data[method].handlers[#route_data[method].handlers + 1] = h
-        end
-        local handlers = route_data[method].handlers
-        --
-        if not handlers then
+        if not route_data[method] then
             return {
                 status = "method_not_allowed",
                 available_methods = get_methods(route_data)
             }
         end
+        for _, h in ipairs(route_data[method].inherit) do
+            route_data[method].handlers[#route_data[method].handlers + 1] = h
+        end
+        local handlers = route_data[method].handlers
         --
         local params = get_params(route.captures)
         return {
             status = "found",
             handlers = handlers,
-            params = params
+            params = params,
+            meta = {
+                method = method,
+                path = req_route
+            }
         }
     end,
 }, {})
