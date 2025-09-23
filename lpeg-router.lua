@@ -60,11 +60,11 @@ local update_route_data = function(router, route, methods, handlers)
         local cache_id = router._route_cache[route]
         local stored_data = router._route_data[cache_id]
         for _, m in ipairs(methods) do
-            if not stored_data[m] then
-                stored_data[m] = {}
-            end
-            for _, cb in ipairs(handlers) do
-                table.insert(stored_data[m], 1, cb)
+            if stored_data[m] then
+                stored_data[m].handlers = {}
+                for _, cb in ipairs(handlers) do
+                    table.insert(stored_data[m].handlers, cb)
+                end
             end
         end
         return cache_id
@@ -89,7 +89,7 @@ local get_params = function(captures)
             params["*"] = wilds
         end
     end
-    return params
+    return next(params) and params or nil
 end
 
 local get_methods = function(route_data)
