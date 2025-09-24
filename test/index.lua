@@ -1,5 +1,5 @@
 local r = require("lpeg-router").new()
-local tx = require("test.tx")
+local tx = require("test.lib.tx")
 --
 local COMMON_METHODS = { "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS" }
 

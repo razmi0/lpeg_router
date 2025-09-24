@@ -1,6 +1,6 @@
 -- luajit test/bench/stress.lua --add4 --lookup1 --dynamic_lookup1
 local r = require("lpeg-router").new()
-local tx = require("test.tx")
+local tx = require("test.lib.tx")
 
 tx.beforeEach = function()
     r = require("lpeg-router").new()
