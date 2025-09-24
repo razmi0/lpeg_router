@@ -204,6 +204,24 @@ end
 
 --#endregion
 
-Watch.new({ paths = { "./" }, recursive = true, exec = "luajit test/index.lua" }):on("change"):on("start"):run()
+for i = 1, #arg, 1 do
+    if arg[i]:match("--index") then
+        Watch.new({
+            paths = { "./" },
+            recursive = true,
+            exec = "luajit test/index.lua"
+        }):on("change"):on("start")
+            :run()
+    elseif arg[i]:match("--bench") then
+        Watch.new({
+            paths = { "./" },
+            recursive = true,
+            exec = "luajit test/bench/stress.lua"
+        }):on("change"):on("start")
+            :run()
+    else
+        error("--index or --bench")
+    end
+end
 
 return Watch
