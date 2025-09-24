@@ -9,6 +9,9 @@ local inspect = require("inspect")
 local lpeg = require("lpeg")
 local P, C, V, Ct, S = lpeg.P, lpeg.C, lpeg.V, lpeg.Ct, lpeg.S
 local COMMON_METHODS = { "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS" }
+local DYNAMIC_IDENTIFIER = ":"
+local WILDCARD_IDENTIFIER = "*"
+local SEPARATOR = "/"
 --
 
 table.acc = function(t, fn, acc)
@@ -48,7 +51,7 @@ function Router.new()
         end,
         ---@private
         _format_path = function(path)
-            if path:match("^[^/]") then return "/" .. path end
+            if path:match("^[^" .. SEPARATOR .. "]") then return SEPARATOR .. path end
             return path
         end,
         ---@private
@@ -58,16 +61,17 @@ function Router.new()
         ---@private
         _grammar = P {
             "ROUTE",
-            ROUTE    = Ct((P("/") * V("SEGMENT")) ^ 1),
-            STATIC   = C((1 - S("/:")) ^ 1),
-            PARAM    = P(":") * C((1 - P("/")) ^ 1),
-            WILDCARD = P("*"),
-            SEGMENT  =
+            SEPARATOR = P(SEPARATOR),
+            ROUTE     = Ct((P(SEPARATOR) * V("SEGMENT")) ^ 1),
+            STATIC    = C((1 - S(SEPARATOR .. WILDCARD_IDENTIFIER .. DYNAMIC_IDENTIFIER)) ^ 1),
+            PARAM     = P(DYNAMIC_IDENTIFIER) * C((1 - P(SEPARATOR)) ^ 1),
+            WILDCARD  = P(WILDCARD_IDENTIFIER),
+            SEGMENT   =
                 (
                     V("WILDCARD") / function()
                         return {
                             wildcard = true,
-                            pattern = P("/") * C(P(1) ^ 0) / function(value)
+                            pattern = P(SEPARATOR) * C(P(1) ^ 0) / function(value)
                                 return { wildcard = value }
                             end
                         }
@@ -78,7 +82,7 @@ function Router.new()
                     V("STATIC") / function(part)
                         return {
                             static = part,
-                            pattern = P("/") * C(P(part)) / function(a) return { static = a } end
+                            pattern = P(SEPARATOR) * C(P(part)) / function(a) return { static = a } end
                         }
                     end
                 )
@@ -87,7 +91,7 @@ function Router.new()
                     V("PARAM") / function(name)
                         return {
                             param = name,
-                            pattern = P("/") * C((1 - P("/")) ^ 1) / function(value)
+                            pattern = P(SEPARATOR) * C((1 - P(SEPARATOR)) ^ 1) / function(value)
                                 return {
                                     param = { name = name, value = value }
                                 }
@@ -113,11 +117,10 @@ function Router:add(method, path, handlers)
 
     path = self._format_path(path)
 
-    -- if path is already stored => update_route
     if self._route_cache[path] then
         local cache_id = self._route_cache[path]
         local stored_data = self.routes[cache_id]
-
+        -- if [method,path] is already stored => no updating
         if not stored_data[method] then
             stored_data[method] = { handlers = {}, inherit = {} }
             for _, cb in ipairs(handlers) do
@@ -150,7 +153,7 @@ function Router:add(method, path, handlers)
     end
 
     local route_pattern = assert(
-        self:_compile((strand * (P("/") ^ 0) * -P(1)) / on_strand),
+        self:_compile((strand * (P(SEPARATOR) ^ 0) * -P(1)) / on_strand),
         "\n\27[38;5;196m[Error] Compiling failed\27[0m : " .. path
     )
 
@@ -211,7 +214,7 @@ function Router:search(method, req_path)
         if node.param then
             params[node.param.name] = node.param.value
         elseif node.wildcard then
-            for match in (node.wildcard .. "/"):gmatch("(.-)" .. "/") do
+            for match in (node.wildcard .. SEPARATOR):gmatch("(.-)" .. SEPARATOR) do
                 wilds[#wilds + 1] = match
             end
             params["*"] = wilds
