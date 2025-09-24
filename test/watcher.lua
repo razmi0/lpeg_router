@@ -208,14 +208,12 @@ for i = 1, #arg, 1 do
     if arg[i]:match("--index") then
         Watch.new({
             paths = { "./" },
-            recursive = true,
             exec = "luajit test/index.lua"
         }):on("change"):on("start")
             :run()
     elseif arg[i]:match("--bench") then
         Watch.new({
             paths = { "./" },
-            recursive = true,
             exec = "luajit test/bench/stress.lua --add1 --lookup1 --dynamic_lookup1"
         }):on("change"):on("start")
             :run()
