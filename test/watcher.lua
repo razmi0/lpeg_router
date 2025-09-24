@@ -216,7 +216,7 @@ for i = 1, #arg, 1 do
         Watch.new({
             paths = { "./" },
             recursive = true,
-            exec = "luajit test/bench/stress.lua"
+            exec = "luajit test/bench/stress.lua --add3 --lookup1 --dynamic_lookup1"
         }):on("change"):on("start")
             :run()
     else
