@@ -1,9 +1,10 @@
-local Router = require("lpeg-router") -- adjust path
+local r = require("lpeg-router").new()
 local tx = require("test.tx")
+--
+local COMMON_METHODS = { "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS" }
 
-local r = Router.new()
 tx.beforeEach = function()
-    r = Router.new()
+    r = require("lpeg-router").new()
 end
 
 tx.describe("router-test", function()
@@ -70,12 +71,77 @@ tx.describe("router-test", function()
         tx.equal(res.status, "found")
     end)
 
-    tx.it("should update handlers if path already registered", function()
-        r:add({ "GET" }, { "/dup" }, { function() return "old" end })
-        r:add({ "GET" }, { "/dup" }, { function() return "new" end })
+    tx.it("should not update if path already registered at given method", function()
+        r:add({ "GET" }, { "/dup" }, { function() return "first" end })
+        r:add({ "GET" }, { "/dup" }, { function() return "second" end })
 
         local res = r:search("GET", "/dup")
         tx.equal(res.status, "found")
-        tx.equal(res.handlers[1](), "new")
+        tx.equal(#res.handlers, 1)
+        tx.equal(res.handlers[1](), "first")
+    end)
+
+    tx.it("should update if path already registered at different method", function()
+        r:add({ "GET" }, { "/pud" }, { function() return "first" end })
+        r:add({ "POST" }, { "/pud" }, { function() return "second" end })
+
+        local res = r:search("POST", "/pud")
+        tx.equal(res.status, "found")
+        tx.equal(#res.handlers, 1)
+        tx.equal(res.handlers[1](), "second")
+    end)
+
+    tx.it("should expand methods == nil into common methods", function()
+        r:add(nil, { "/expand" }, { function() return "ok" end })
+
+        for _, m in ipairs(COMMON_METHODS) do
+            local res = r:search(m, "/expand")
+            tx.equal(res.status, "found")
+        end
+    end)
+
+    tx.it("should expand methods == '*' into common methods", function()
+        r:add("*", { "/expand2" }, { function() return "ok" end })
+
+        for _, m in ipairs(COMMON_METHODS) do
+            local res = r:search(m, "/expand2")
+            tx.equal(res.status, "found")
+        end
+    end)
+
+    tx.it("should throw if paths == nil", function()
+        tx.throws(function()
+            r:add({ "GET" }, nil, { function() end })
+        end)
+    end)
+
+    tx.it("should throw if handlers == nil", function()
+        tx.throws(function()
+            r:add({ "GET" }, { "/nohandler" }, nil)
+        end)
+    end)
+
+    tx.it("should accept parameters as his primary type not just table", function()
+        r:add("GET", "/single-method", function() return "ok" end)
+        local res = r:search("GET", "/single-method")
+        tx.equal(res.status, "found")
+        tx.equal(res.handlers[1](), "ok")
+    end)
+
+    tx.it("should allow multiple middlewares stacking", function()
+        local mw1 = function() return "mw1" end
+        local mw2 = function() return "mw2" end
+        local leaf = function() return "leaf" end
+
+        r:add({ "GET" }, { "*" }, { mw1 })
+        r:add({ "GET" }, { "/api/*" }, { mw2 })
+        r:add({ "GET" }, { "/api/data" }, { leaf })
+
+        local res = r:search("GET", "/api/data")
+        tx.equal(res.status, "found")
+        tx.equal(#res.handlers, 3)
+        tx.equal(res.handlers[1](), "mw1")
+        tx.equal(res.handlers[2](), "mw2")
+        tx.equal(res.handlers[3](), "leaf")
     end)
 end)
