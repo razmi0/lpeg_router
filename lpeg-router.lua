@@ -14,7 +14,7 @@ local WILDCARD_IDENTIFIER = "*"
 local SEPARATOR = "/"
 --
 
-table.acc = function(t, fn, acc)
+local acc = function(t, fn, acc)
     for k, v in pairs(t) do
         acc = fn(v, acc, k)
     end
@@ -111,6 +111,11 @@ function Router:add(method, path, handlers)
         return
     end
 
+    if not method then
+        print("no")
+        return
+    end
+
     if type(handlers) == "function" then
         handlers = { handlers }
     end
@@ -196,7 +201,7 @@ function Router:search(method, req_path)
     if not route_data[method] then
         return {
             status = "method_not_allowed",
-            available_methods = table.acc(route_data, function(_, acc, m)
+            available_methods = acc(route_data, function(_, acc, m)
                 acc[#acc + 1] = m
                 return acc
             end, {}),
