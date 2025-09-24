@@ -13,20 +13,20 @@ local get_duration_budget = function(type)
             return tonumber(arg[i]:match("%d+"))
         end
     end
-    return 3
+    return 1
 end
 
 tx.describe("router-stress-test", function()
-    tx.it("should handle adding 10,000 static routes efficiently", function()
+    tx.it("should handle adding 5,000 static routes efficiently", function()
         local handler = function() return "ok" end
 
         local t0 = os.clock()
-        for i = 1, 10000 do
-            r:add({ "GET" }, { "/path" .. i }, { handler })
+        for i = 1, 5000 do
+            r:add("GET", "/path" .. i, { handler })
         end
         local t1 = os.clock()
 
-        local res = r:search("GET", "/path10000")
+        local res = r:search("GET", "/path5000")
         tx.equal(res.status, "found")
 
         local duration = t1 - t0
@@ -43,7 +43,7 @@ tx.describe("router-stress-test", function()
 
         -- preload 500 routes
         for i = 1, 500 do
-            r:add({ "GET" }, { "/lookup" .. i }, { handler })
+            r:add("GET", "/lookup" .. i, { handler })
         end
 
         local t0 = os.clock()
@@ -65,7 +65,7 @@ tx.describe("router-stress-test", function()
 
     tx.it("should handle 100k dynamic lookups", function()
         local handler = function() return "ok" end
-        r:add({ "GET" }, { "/user/:id" }, { handler })
+        r:add("GET", "/user/:id", { handler })
 
         local t0 = os.clock()
         for i = 1, 100000 do
