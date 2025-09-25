@@ -3,15 +3,12 @@
 -- [ ] dynamic param with pattern
 -- [ ] dynamic param with default value ?
 -- [x] dynamic wildcards
--- [ ] method agnostic
+-- [x] method agnostic
 
 local inspect = require("inspect")
 local lpeg = require("lpeg")
 local P, C, V, Ct, S = lpeg.P, lpeg.C, lpeg.V, lpeg.Ct, lpeg.S
-local COMMON_METHODS = { "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS" }
-local DYNAMIC_IDENTIFIER = ":"
-local WILDCARD_IDENTIFIER = "*"
-local SEPARATOR = "/"
+
 --
 
 local acc = function(t, fn, acc)
@@ -24,8 +21,21 @@ end
 local Router = {}
 Router.__index = Router
 
-function Router.new()
+function Router.new(
+    DYNAMIC_IDENTIFIER,
+    WILDCARD_IDENTIFIER,
+    ALL_METHOD_IDENTIFIER,
+    SEPARATOR
+)
+    DYNAMIC_IDENTIFIER = DYNAMIC_IDENTIFIER or ":"
+    WILDCARD_IDENTIFIER = WILDCARD_IDENTIFIER or "*"
+    ALL_METHOD_IDENTIFIER = ALL_METHOD_IDENTIFIER or "__all"
+    SEPARATOR = SEPARATOR or "/"
     return setmetatable({
+        DYNAMIC_IDENTIFIER = DYNAMIC_IDENTIFIER,
+        WILDCARD_IDENTIFIER = WILDCARD_IDENTIFIER,
+        ALL_METHOD_IDENTIFIER = ALL_METHOD_IDENTIFIER,
+        SEPARATOR = SEPARATOR,
         size = 0,
         ---@private
         _create_id = function(self)
@@ -46,6 +56,10 @@ function Router.new()
         ---@private
         _create_route = function(method, handlers)
             local route = {}
+            if not method then
+                route[ALL_METHOD_IDENTIFIER] = { handlers = { unpack(handlers) }, inherit = {} }
+                return route
+            end
             route[method] = { handlers = { unpack(handlers) }, inherit = {} }
             return route
         end,
@@ -99,23 +113,11 @@ function Router.new()
                         }
                     end
                 )
-        },
+        }
     }, Router)
 end
 
 function Router:add(method, path, handlers)
-    if not method or method == "*" then
-        for _, m in ipairs(COMMON_METHODS) do
-            self:add(m, path, handlers)
-        end
-        return
-    end
-
-    if not method then
-        print("no")
-        return
-    end
-
     if type(handlers) == "function" then
         handlers = { handlers }
     end
@@ -139,6 +141,12 @@ function Router:add(method, path, handlers)
     local route_id = self:_create_id()
     self._route_cache[path] = route_id
 
+    -- storing path data node
+    local route = self._create_route(method, handlers)
+    self.routes[route_id] = route
+
+
+
     -- segment of the path identification
     local parts = assert(
         lpeg.match(self._grammar, path),
@@ -158,21 +166,17 @@ function Router:add(method, path, handlers)
     end
 
     local route_pattern = assert(
-        self:_compile((strand * (P(SEPARATOR) ^ 0) * -P(1)) / on_strand),
+        self:_compile((strand * (P(self.SEPARATOR) ^ 0) * -P(1)) / on_strand),
         "\n\27[38;5;196m[Error] Compiling failed\27[0m : " .. path
     )
-
-    -- storing path data node
-    local route = self._create_route(method, handlers)
-    self.routes[route_id] = route
 
     -- inherited routes are the wild ones already registered
     for _, pattern in ipairs(self._wilds_patterns) do
         local parsed_wild = lpeg.match(pattern, path) -- we test wild path against current route
         if parsed_wild then                           -- if match, add wilds handlers to route inherited array of handlers respecting methods
             local wild_data = self.routes[parsed_wild.route_id]
-            local src = wild_data[method]
-            local dst = route[method]
+            local src = wild_data[method] or wild_data[self.ALL_METHOD_IDENTIFIER]
+            local dst = route[method] or route[self.ALL_METHOD_IDENTIFIER]
             if src and dst then
                 for _, h in ipairs(src.handlers) do
                     table.insert(dst.inherit, 1, h)
@@ -197,20 +201,20 @@ function Router:search(method, req_path)
         return { status = "not_found" }
     end
     --
-    local route_data = self.routes[route.route_id]
-    if not route_data[method] then
+    local route_data = self.routes[route.route_id][method] or self.routes[route.route_id][self.ALL_METHOD_IDENTIFIER]
+    if not route_data then
         return {
             status = "method_not_allowed",
-            available_methods = acc(route_data, function(_, acc, m)
-                acc[#acc + 1] = m
-                return acc
+            available_methods = acc(self.routes[route.route_id], function(_, accu, m)
+                accu[#accu + 1] = m
+                return accu
             end, {}),
         }
     end
-    for _, h in ipairs(route_data[method].inherit) do
-        table.insert(route_data[method].handlers, 1, h)
+    for _, h in ipairs(route_data.inherit) do
+        table.insert(route_data.handlers, 1, h)
     end
-    local handlers = route_data[method].handlers
+    local handlers = route_data.handlers
     --
 
     local params = {}
@@ -219,7 +223,7 @@ function Router:search(method, req_path)
         if node.param then
             params[node.param.name] = node.param.value
         elseif node.wildcard then
-            for match in (node.wildcard .. SEPARATOR):gmatch("(.-)" .. SEPARATOR) do
+            for match in (node.wildcard .. self.SEPARATOR):gmatch("(.-)" .. self.SEPARATOR) do
                 wilds[#wilds + 1] = match
             end
             params["*"] = wilds
