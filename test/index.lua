@@ -2,7 +2,6 @@ local inspect = require("inspect")
 local r = require("lpeg-router").new()
 local tx = require("test.lib.tx")
 --
-local COMMON_METHODS = { "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS" }
 
 tx.beforeEach = function()
     r = require("lpeg-router").new()
@@ -45,6 +44,16 @@ tx.describe("router-test", function()
 
         local res = r:search("GET", "/multi")
         tx.equal(#res.handlers, 2)
+    end)
+
+    tx.it("should return wild handler", function()
+        r:add("GET", "*", function()
+            return "wild"
+        end)
+        local res = r:search("GET", "/path/to/wild")
+        tx.equal(#res.handlers, 1)
+        tx.equal(res.handlers[1](), "wild")
+        tx.equal(res.status, "found")
     end)
 
     tx.it("should inherit handlers from wildcard route", function()
@@ -96,12 +105,12 @@ tx.describe("router-test", function()
         r:add(nil, "/expand", { function() return "ok" end })
 
         math.randomseed(os.time())
-        local methods = {}
+        local pseudo_methods = {}
         for _ = 1, 10 do
-            methods[#methods + 1] = string.char(math.random(33, 126))
+            pseudo_methods[#pseudo_methods + 1] = string.char(math.random(33, 126))
         end
 
-        for _, m in ipairs(methods) do
+        for _, m in ipairs(pseudo_methods) do
             local res = r:search(m, "/expand")
             tx.equal(res.status, "found")
         end
@@ -117,13 +126,6 @@ tx.describe("router-test", function()
         tx.throws(function()
             r:add("GET", "/nohandler", nil)
         end)
-    end)
-
-    tx.it("should accept parameters as his primary type not just table", function()
-        r:add("GET", "/single-method", function() return "ok" end)
-        local res = r:search("GET", "/single-method")
-        tx.equal(res.status, "found")
-        tx.equal(res.handlers[1](), "ok")
     end)
 
     tx.it("should allow multiple middlewares stacking", function()
