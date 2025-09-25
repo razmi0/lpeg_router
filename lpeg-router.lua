@@ -8,16 +8,7 @@
 local inspect = require("inspect")
 local lpeg = require("lpeg")
 local P, C, V, Ct, S = lpeg.P, lpeg.C, lpeg.V, lpeg.Ct, lpeg.S
-
 --
-
-local acc = function(t, fn, acc)
-    for k, v in pairs(t) do
-        acc = fn(v, acc, k)
-    end
-    return acc
-end
-
 local Router = {}
 Router.__index = Router
 
@@ -76,10 +67,10 @@ function Router.new(
         _grammar = P {
             "ROUTE",
             SEPARATOR = P(SEPARATOR),
-            ROUTE     = Ct((P(SEPARATOR) * V("SEGMENT")) ^ 1),
             STATIC    = C((1 - S(SEPARATOR .. WILDCARD_IDENTIFIER .. DYNAMIC_IDENTIFIER)) ^ 1),
             PARAM     = P(DYNAMIC_IDENTIFIER) * C((1 - P(SEPARATOR)) ^ 1),
             WILDCARD  = P(WILDCARD_IDENTIFIER),
+            ROUTE     = Ct((P(SEPARATOR) * V("SEGMENT")) ^ 1),
             SEGMENT   =
                 (
                     V("WILDCARD") / function()
@@ -145,8 +136,6 @@ function Router:add(method, path, handlers)
     local route = self._create_route(method, handlers)
     self.routes[route_id] = route
 
-
-
     -- segment of the path identification
     local parts = assert(
         lpeg.match(self._grammar, path),
@@ -170,18 +159,28 @@ function Router:add(method, path, handlers)
         "\n\27[38;5;196m[Error] Compiling failed\27[0m : " .. path
     )
 
-    -- inherited routes are the wild ones already registered
+    local collected_groups = {}
     for _, pattern in ipairs(self._wilds_patterns) do
-        local parsed_wild = lpeg.match(pattern, path) -- we test wild path against current route
-        if parsed_wild then                           -- if match, add wilds handlers to route inherited array of handlers respecting methods
+        local parsed_wild = lpeg.match(pattern, path)
+        if parsed_wild then
             local wild_data = self.routes[parsed_wild.route_id]
             local src = wild_data[method] or wild_data[self.ALL_METHOD_IDENTIFIER]
-            local dst = route[method] or route[self.ALL_METHOD_IDENTIFIER]
-            if src and dst then
-                for _, h in ipairs(src.handlers) do
-                    table.insert(dst.inherit, 1, h)
+            if src and src.handlers then
+                table.insert(collected_groups, 1, src.handlers)
+            end
+        end
+    end
+
+    if #collected_groups > 0 then
+        local dst = route[method] or route[self.ALL_METHOD_IDENTIFIER]
+        if dst then
+            local final_inherit = {}
+            for _, group in ipairs(collected_groups) do
+                for _, handler in ipairs(group) do
+                    table.insert(final_inherit, handler)
                 end
             end
+            dst.inherit = final_inherit
         end
     end
 
@@ -203,12 +202,13 @@ function Router:search(method, req_path)
     --
     local route_data = self.routes[route.route_id][method] or self.routes[route.route_id][self.ALL_METHOD_IDENTIFIER]
     if not route_data then
+        local available = {}
+        for m, _ in pairs(self.routes[route.route_id]) do
+            table.insert(available, m)
+        end
         return {
             status = "method_not_allowed",
-            available_methods = acc(self.routes[route.route_id], function(_, accu, m)
-                accu[#accu + 1] = m
-                return accu
-            end, {}),
+            available_methods = available
         }
     end
     for _, h in ipairs(route_data.inherit) do
