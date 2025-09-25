@@ -28,12 +28,6 @@ function Router.new(
         WILDCARD_IDENTIFIER = WILDCARD_IDENTIFIER,
         ALL_METHOD_IDENTIFIER = ALL_METHOD_IDENTIFIER,
         SEPARATOR = SEPARATOR,
-        size = 0,
-        ---@private
-        _create_id = function(self)
-            self.size = self.size + 1
-            return "_" .. self.size
-        end,
         ---@private
         _compiled_strand = nil,
         ---@private
@@ -44,7 +38,7 @@ function Router.new(
             return route_pattern
         end,
         ---@private
-        routes = {}, -- ( [id] : { [method] : handlers } )[]
+        routes = {}, -- ( [path] : { [method] : handlers } )[]
         ---@private
         _create_route = function(method, handlers)
             local route = {}
@@ -60,8 +54,6 @@ function Router.new(
             if path:match("^[^" .. SEPARATOR .. "]") then return SEPARATOR .. path end
             return path
         end,
-        ---@private
-        _route_cache = {}, -- ( [path] : id )[]
         ---@private
         _wilds_patterns = {},
         ---@private
@@ -116,9 +108,9 @@ function Router:add(method, path, handlers)
 
     path = self._format_path(path)
 
-    if self._route_cache[path] then
-        local cache_id = self._route_cache[path]
-        local stored_data = self.routes[cache_id]
+    if self.routes[path] then
+        -- local cache_id = self._route_cache[path]
+        local stored_data = self.routes[path]
         -- if [method,path] is already stored => no updating
         if not stored_data[method] then
             stored_data[method] = { handlers = {}, inherit = {} }
@@ -129,13 +121,9 @@ function Router:add(method, path, handlers)
         return
     end
 
-    -- path is processed
-    local route_id = self:_create_id()
-    self._route_cache[path] = route_id
-
     -- storing path data node
     local route = self._create_route(method, handlers)
-    self.routes[route_id] = route
+    self.routes[path] = route
 
     -- segment of the path identification
     local parts = assert(
@@ -150,13 +138,11 @@ function Router:add(method, path, handlers)
         strand = strand and (strand * p) or p -- lpeg concatenation
     end
 
-    local on_strand = function(...)
-        local caps = { ... }
-        return { route_id = route_id, captures = caps }
-    end
-
     local route_pattern = assert(
-        self:_compile((strand * (P(self.SEPARATOR) ^ 0) * -P(1)) / on_strand),
+        self:_compile(C(strand * (P(self.SEPARATOR) ^ 0) * -P(1)) / function(...)
+            local caps = { ... }
+            return { captures = caps, path = path }
+        end),
         "\n\27[38;5;196m[Error] Compiling failed\27[0m : " .. path
     )
 
@@ -164,7 +150,7 @@ function Router:add(method, path, handlers)
     for _, pattern in ipairs(self._wilds_patterns) do
         local parsed_wild = lpeg.match(pattern, path)
         if parsed_wild then
-            local wild_data = self.routes[parsed_wild.route_id]
+            local wild_data = self.routes[parsed_wild.path]
             local src = wild_data[method] or wild_data[self.ALL_METHOD_IDENTIFIER]
             if src and src.handlers then
                 table.insert(collected_groups, 1, src.handlers)
@@ -201,10 +187,10 @@ function Router:search(method, req_path)
         return { status = "not_found" }
     end
     --
-    local route_data = self.routes[route.route_id][method] or self.routes[route.route_id][self.ALL_METHOD_IDENTIFIER]
+    local route_data = self.routes[route.path][method] or self.routes[route.path][self.ALL_METHOD_IDENTIFIER]
     if not route_data then
         local available = {}
-        for m, _ in pairs(self.routes[route.route_id]) do
+        for m, _ in pairs(self.routes[route.path]) do
             table.insert(available, m)
         end
         return {
