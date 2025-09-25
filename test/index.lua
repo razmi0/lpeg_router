@@ -92,20 +92,17 @@ tx.describe("router-test", function()
         tx.equal(res.handlers[1](), "second")
     end)
 
-    tx.it("should expand methods == nil into common methods", function()
+    tx.it("should expand path to all methods", function()
         r:add(nil, "/expand", { function() return "ok" end })
 
-        for _, m in ipairs(COMMON_METHODS) do
-            local res = r:search(m, "/expand")
-            tx.equal(res.status, "found")
+        math.randomseed(os.time())
+        local methods = {}
+        for _ = 1, 10 do
+            methods[#methods + 1] = string.char(math.random(33, 126))
         end
-    end)
 
-    tx.it("should expand methods == '*' into common methods", function()
-        r:add("*", "/expand2", { function() return "ok" end })
-
-        for _, m in ipairs(COMMON_METHODS) do
-            local res = r:search(m, "/expand2")
+        for _, m in ipairs(methods) do
+            local res = r:search(m, "/expand")
             tx.equal(res.status, "found")
         end
     end)
