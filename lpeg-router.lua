@@ -1,6 +1,7 @@
 -- [x] static
 -- [x] dynamic param
 -- [ ] dynamic param with pattern
+-- [ ] dynamic param with optionnal
 -- [ ] dynamic param with default value ?
 -- [x] dynamic wildcards
 -- [x] method agnostic
