@@ -214,7 +214,8 @@ for i = 1, #arg, 1 do
     elseif arg[i]:match("--bench") then
         Watch.new({
             paths = { "./" },
-            exec = "luajit test/bench/stress.lua --add1 --lookup1 --dynamic_lookup1"
+            -- everything under 1s
+            exec = "luajit test/bench/stress.lua --add-1-5000 --lookup-1-100000 --dynamic_lookup-1-100000"
         }):on("change"):on("start")
             :run()
     else
