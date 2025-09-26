@@ -17,6 +17,11 @@ tx.describe("router-test", function()
         tx.equal(res.params, nil)
     end)
 
+    tx.it("should not find anything", function()
+        local res = r:search("GET", "/home")
+        tx.equal(res.status, "not_found")
+    end)
+
     tx.it("should return not_found for unknown route", function()
         local res = r:search("GET", "/unknown")
         tx.equal(res.status, "not_found")
@@ -143,5 +148,28 @@ tx.describe("router-test", function()
         tx.equal(res.handlers[1](), "mw1")
         tx.equal(res.handlers[2](), "mw2")
         tx.equal(res.handlers[3](), "leaf")
+    end)
+
+    tx.it("should find the route with pattern", function()
+        r:add("GET", "/:id(%d+)/:type(%a+)", function()
+            return "patterned"
+        end)
+
+        local res = r:search("GET", "/123/abc")
+        tx.equal(res.status, "found")
+        tx.equal(res.params.id, "123")
+        tx.equal(res.params.type, "abc")
+        tx.equal(#res.handlers, 1)
+        tx.equal(res.handlers[1](), "patterned")
+    end)
+
+    tx.it("should not find the route with pattern", function()
+        r:add("GET", "/:id(%d+)/:type(%a+)", function()
+            return "patterned"
+        end)
+
+        local res = r:search("GET", "/abc/123")
+
+        tx.equal(res.status, "not_found")
     end)
 end)

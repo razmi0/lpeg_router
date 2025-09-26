@@ -6,28 +6,31 @@
 -- [x] dynamic wildcards
 -- [x] method agnostic
 
-local inspect = require("inspect")
-local lpeg = require("lpeg")
-local P, C, V, Ct, S = lpeg.P, lpeg.C, lpeg.V, lpeg.Ct, lpeg.S
+local inspect            = require("inspect")
+local lpeg               = require("lpeg")
+local P, C, V, Ct, S, Cs = lpeg.P, lpeg.C, lpeg.V, lpeg.Ct, lpeg.S, lpeg.Cs
 --
-local Router = {}
-Router.__index = Router
+local Router             = {}
+Router.__index           = Router
 
-function Router.new(
-    DYNAMIC_IDENTIFIER,
-    WILDCARD_IDENTIFIER,
-    ALL_METHOD_IDENTIFIER,
-    SEPARATOR
-)
-    DYNAMIC_IDENTIFIER = DYNAMIC_IDENTIFIER or ":"
-    WILDCARD_IDENTIFIER = WILDCARD_IDENTIFIER or "*"
-    ALL_METHOD_IDENTIFIER = ALL_METHOD_IDENTIFIER or "__all"
-    SEPARATOR = SEPARATOR or "/"
+local
+DYNAMIC_IDENTIFIER,
+WILDCARD_IDENTIFIER,
+ALL_METHOD_IDENTIFIER,
+SEPARATOR,
+OPTIONAL_IDENTIFIER,
+OPEN_VALIDATION,
+CLOSE_VALIDATION
+                         = ":", "*", "__all", "/", "?", "(", ")"
+function Router.new()
     return setmetatable({
         DYNAMIC_IDENTIFIER = DYNAMIC_IDENTIFIER,
         WILDCARD_IDENTIFIER = WILDCARD_IDENTIFIER,
         ALL_METHOD_IDENTIFIER = ALL_METHOD_IDENTIFIER,
         SEPARATOR = SEPARATOR,
+        OPTIONAL_IDENTIFIER = OPTIONAL_IDENTIFIER,
+        OPEN_VALIDATION = OPEN_VALIDATION,
+        CLOSE_VALIDATION = CLOSE_VALIDATION,
         ---@private
         _compiled_strand = nil,
         ---@private
@@ -60,11 +63,28 @@ function Router.new(
         _grammar = P {
             "ROUTE",
             SEPARATOR = P(SEPARATOR),
-            STATIC    = C((1 - S(SEPARATOR .. WILDCARD_IDENTIFIER .. DYNAMIC_IDENTIFIER)) ^ 1),
-            PARAM     = P(DYNAMIC_IDENTIFIER) * C((1 - P(SEPARATOR)) ^ 1),
+            STATIC    = C((1 - S(
+                SEPARATOR ..
+                WILDCARD_IDENTIFIER ..
+                DYNAMIC_IDENTIFIER ..
+                OPTIONAL_IDENTIFIER ..
+                OPEN_VALIDATION ..
+                CLOSE_VALIDATION
+            )) ^ 1),
+            PARAM     = P(":") * C((1 - S("/:?(")) ^ 1) * C(P("?") ^ -1) * Cs((P("(") * C((1 - S(")")) ^ 0) * P(")")) ^ -1),
             WILDCARD  = P(WILDCARD_IDENTIFIER),
             ROUTE     = Ct((P(SEPARATOR) * V("SEGMENT")) ^ 1),
             SEGMENT   =
+                (
+                    V("STATIC") / function(part)
+                        return {
+                            static = part,
+                            pattern = P(SEPARATOR) * C(P(part)) / function(a) return { static = a } end
+                        }
+                    end
+
+                )
+                +
                 (
                     V("WILDCARD") / function()
                         return {
@@ -75,28 +95,28 @@ function Router.new(
                         }
                     end
                 )
+
                 +
                 (
-                    V("STATIC") / function(part)
-                        return {
-                            static = part,
-                            pattern = P(SEPARATOR) * C(P(part)) / function(a) return { static = a } end
-                        }
-                    end
-                )
-                +
-                (
-                    V("PARAM") / function(name)
+                    V("PARAM") / function(name, opt, validation)
+                        local val = validation ~= "" and validation:sub(2, -2) or nil
                         return {
                             param = name,
+                            optional = opt ~= "" or nil,
+                            validation = val,
                             pattern = P(SEPARATOR) * C((1 - P(SEPARATOR)) ^ 1) / function(value)
+                                if (val and value) and not value:match(val) then
+                                    return "failed_validation"
+                                end
                                 return {
                                     param = { name = name, value = value }
                                 }
                             end
                         }
                     end
+
                 )
+
         }
     }, Router)
 end
@@ -121,11 +141,11 @@ function Router:add(method, path, handlers)
         return
     end
 
-    -- storing path data node
+    -- storing associated path data : Route
     local route = self._create_route(method, handlers)
     self.routes[path] = route
 
-    -- segment of the path identification
+    -- segments identifications
     local parts = assert(
         lpeg.match(self._grammar, path),
         "\n\27[38;5;196m[Error] Parsing failed\27[0m : " .. path
@@ -139,8 +159,9 @@ function Router:add(method, path, handlers)
     end
 
     local route_pattern = assert(
-        self:_compile(C(strand * (P(self.SEPARATOR) ^ 0) * -P(1)) / function(...)
+        self:_compile(strand * (P(self.SEPARATOR) ^ 0) * -P(1) / function(...) -- strand * separator * end of path
             local caps = { ... }
+            if caps[1] == "failed_validation" then return { path = path } end
             return { captures = caps, path = path }
         end),
         "\n\27[38;5;196m[Error] Compiling failed\27[0m : " .. path
@@ -177,32 +198,48 @@ function Router:add(method, path, handlers)
     end
 end
 
-function Router:search(method, req_path)
-    req_path = self._format_path(req_path)
+function Router:search(method, path)
+    path = self._format_path(path)
+    local create_result = function(status, available_methods, handlers, params)
+        return {
+            status = status,
+            available_methods = available_methods,
+            handlers = handlers,
+            params = params,
+            meta = {
+                method = method,
+                path = path
+            }
+        }
+    end
+
     if not self._compiled_strand then
-        return { status = "not_found" }
+        return create_result("not_found")
     end
-    local route = lpeg.match(self._compiled_strand, req_path)
-    if not route then
-        return { status = "not_found" }
+
+    local route = lpeg.match(self._compiled_strand, path)
+    if not route or not route.captures then
+        return create_result("not_found")
     end
-    --
-    local route_data = self.routes[route.path][method] or self.routes[route.path][self.ALL_METHOD_IDENTIFIER]
+
+    local route_data = self.routes[route.path][method]
+        or self.routes[route.path][self.ALL_METHOD_IDENTIFIER]
+
     if not route_data then
         local available = {}
         for m, _ in pairs(self.routes[route.path]) do
             table.insert(available, m)
         end
-        return {
-            status = "method_not_allowed",
-            available_methods = available
-        }
+        return create_result("method_not_allowed", available)
     end
-    for _, h in ipairs(route_data.inherit) do
-        table.insert(route_data.handlers, 1, h)
+
+    local handlers = {}
+    for _, h in ipairs(route_data.handlers or {}) do
+        handlers[#handlers + 1] = h
     end
-    local handlers = route_data.handlers
-    --
+    for _, h in ipairs(route_data.inherit or {}) do
+        table.insert(handlers, 1, h)
+    end
 
     local params = {}
     local wilds = {}
@@ -217,15 +254,7 @@ function Router:search(method, req_path)
         end
     end
 
-    return {
-        status = "found",
-        handlers = handlers,
-        params = next(params) and params or nil,
-        meta = {
-            method = method,
-            path = req_path
-        }
-    }
+    return create_result("found", nil, handlers, next(params) and params or nil)
 end
 
 return Router
