@@ -1,4 +1,4 @@
--- luajit test/bench/stress.lua --add4 --lookup1 --dynamic_lookup1
+-- luajit test/bench/stress.lua --add-1-5000 --lookup-1-100000 --dynamic_lookup-1-100000
 local r = require("lpeg-router").new()
 local tx = require("test.lib.tx")
 
@@ -7,21 +7,28 @@ tx.beforeEach = function()
 end
 
 ---@param type "add" | "lookup" | "dynamic_lookup"
-local get_duration_budget = function(type)
+local get_rules = function(type)
     for i = 1, #arg, 1 do
-        if arg[i]:match("--" .. type .. "%d+") then
-            return tonumber(arg[i]:match("%d+"))
+        local challenge_duration, challenge_route = arg[i]:match("%-%-" .. type .. "%-(%d+)%-(%d+)")
+        if challenge_duration and challenge_route then
+            return {
+                max_duration = tonumber(challenge_duration), max_routes = tonumber(challenge_route)
+            }
         end
     end
-    return 1
+    error("Arguments not found --<challenge_duration>-<challenge_route>")
 end
+
+local add_rules = get_rules("add")
+local lookup_rules = get_rules("lookup")
+local dynamic_lookup_rules = get_rules("dynamic_lookup")
 
 tx.describe("router-stress-test", function()
     tx.it("should handle adding 5,000 static routes efficiently", function()
         local handler = function() return "ok" end
 
         local t0 = os.clock()
-        for i = 1, 5000 do
+        for i = 1, add_rules.max_routes do
             r:add("GET", "/path" .. i, { handler })
         end
         local t1 = os.clock()
@@ -30,11 +37,10 @@ tx.describe("router-stress-test", function()
         tx.equal(res.status, "found")
 
         local duration = t1 - t0
-        local budget = get_duration_budget("add")
-        if duration > budget then
-            tx.fail(duration .. "s" .. "/" .. budget .. "s")
+        if duration > add_rules.max_duration then
+            tx.fail(duration .. "s" .. "/" .. add_rules.max_duration .. "s")
         else
-            print(duration .. "s" .. "/" .. budget .. "s")
+            print(duration .. "s" .. "/" .. add_rules.max_duration .. "s")
         end
     end)
 
@@ -47,7 +53,7 @@ tx.describe("router-stress-test", function()
         end
 
         local t0 = os.clock()
-        for i = 1, 100000 do
+        for i = 1, lookup_rules.max_routes do
             local idx = math.random(1, 500)
             local res = r:search("GET", "/lookup" .. idx)
             tx.equal(res.status, "found")
@@ -55,11 +61,10 @@ tx.describe("router-stress-test", function()
         local t1 = os.clock()
 
         local duration = t1 - t0
-        local budget = get_duration_budget("lookup")
-        if duration > budget then
-            tx.fail(duration .. "s" .. "/" .. budget .. "s")
+        if duration > lookup_rules.max_duration then
+            tx.fail(duration .. "s" .. "/" .. lookup_rules.max_duration .. "s")
         else
-            print(duration .. "s" .. "/" .. budget .. "s")
+            print(duration .. "s" .. "/" .. lookup_rules.max_duration .. "s")
         end
     end)
 
@@ -68,7 +73,7 @@ tx.describe("router-stress-test", function()
         r:add("GET", "/user/:id", { handler })
 
         local t0 = os.clock()
-        for i = 1, 100000 do
+        for i = 1, dynamic_lookup_rules.max_routes do
             local res = r:search("GET", "/user/" .. i)
             tx.equal(res.status, "found")
             tx.equal(res.params.id, tostring(i))
@@ -76,11 +81,10 @@ tx.describe("router-stress-test", function()
         local t1 = os.clock()
 
         local duration = t1 - t0
-        local budget = get_duration_budget("dynamic_lookup")
-        if duration > budget then
-            tx.fail(duration .. "s" .. "/" .. budget .. "s")
+        if duration > dynamic_lookup_rules.max_duration then
+            tx.fail(duration .. "s" .. "/" .. dynamic_lookup_rules.max_duration .. "s")
         else
-            print(duration .. "s" .. "/" .. budget .. "s")
+            print(duration .. "s" .. "/" .. dynamic_lookup_rules.max_duration .. "s")
         end
     end)
 end)
